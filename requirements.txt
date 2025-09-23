@@ -1,4 +1,4 @@
 PyQt6
 Pillow
 moviepy
-opencv-python
+

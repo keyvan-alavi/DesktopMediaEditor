@@ -1,8 +1,8 @@
 import sys
 import os
 import time
-import cv2
 import shutil
+import subprocess
 from moviepy import VideoFileClip
 from PIL import Image, ImageFilter, ImageEnhance, ImageOps
 from PyQt6.QtWidgets import (
@@ -13,6 +13,19 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
+
+# تنظیم مسیر ffmpeg برای moviepy
+if getattr(sys, 'frozen', False):
+    base_dir = sys._MEIPASS
+else:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
+FFMPEG_PATH = os.path.join(base_dir, 'ffmpeg', 'ffmpeg.exe')
+FFPROBE_PATH = os.path.join(base_dir, 'ffmpeg', 'ffprobe.exe')
+
+# تنظیم متغیرهای محیطی برای moviepy
+os.environ["FFMPEG_BINARY"] = FFMPEG_PATH
+os.environ["FFPROBE_BINARY"] = FFPROBE_PATH
 
 CACHE_DIR = 'cache'
 if not os.path.exists(CACHE_DIR):
@@ -43,43 +56,32 @@ class ProgressThread(QThread):
 
     def trim_video(self, input_path, start_secs, end_secs, output_path):
         try:
-            cap = cv2.VideoCapture(input_path)
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-            start_frame = int(start_secs * fps)
-            end_frame = int(end_secs * fps)
-
-            if start_frame >= end_frame or end_frame > total_frames:
-                return False
-
-            out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-
-            frame_count = end_frame - start_frame
-            for i in range(frame_count):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                out.write(frame)
-                self.progress_signal.emit(int((i + 1) / frame_count * 100))
-
-            cap.release()
-            out.release()
+            duration = end_secs - start_secs
+            cmd = [
+                FFMPEG_PATH,
+                '-i', input_path,
+                '-ss', str(start_secs),
+                '-t', str(duration),
+                '-c:v', 'copy',
+                '-c:a', 'copy',
+                '-y',
+                output_path
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            self.progress_signal.emit(100)
             return os.path.exists(output_path)
-        except Exception:
+        except Exception as e:
+            print(f"Error in video trimming: {str(e)}")
             return False
 
     def convert_to_mp3(self, input_path, output_path):
         try:
-            video = VideoFileClip(input_path)
-            video.audio.write_audiofile(output_path)
-            video.close()
+            cmd = [FFMPEG_PATH, '-i', input_path, '-vn', '-acodec', 'mp3', '-q:a', '0', output_path]
+            subprocess.run(cmd, check=True, capture_output=True)
             self.progress_signal.emit(100)
             return True
-        except Exception:
+        except Exception as e:
+            print(f"Error in MP3 conversion: {str(e)}")
             return False
 
 class MediaEditor(QMainWindow):

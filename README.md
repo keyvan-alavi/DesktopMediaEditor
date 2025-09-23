@@ -1,0 +1,2 @@
+# DesktopMediaEditor
+A modern bilingual (English/Persian) desktop application built with Python and PyQt6 for editing images and videos — featuring filters, quality adjustments, video trimming, audio extraction, and customizable themes.  یک نرم‌افزار دسکتاپ مدرن دو زبانه (انگلیسی/فارسی) ساخته‌شده با Python و PyQt6 برای ویرایش تصویر و ویدئو — دارای فیلترها، تنظیمات کیفیت، برش ویدئو، استخراج صدا و تم‌های قابل شخصی‌سازی.

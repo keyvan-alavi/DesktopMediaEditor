@@ -77,3 +77,15 @@ This project is licensed under the MIT License – see the LICENSE file for deta
 
 ## 📜 مجوز
 این پروژه تحت مجوز MIT منتشر شده است – برای جزئیات فایل LICENSE را ببینید.
+
+---
+## 🤝 Contributing | مشارکت
+Contributions are welcome!  
+مشارکت‌ها پذیرفته می‌شوند. لطفاً برای بهبود یا رفع اشکال، issue یا pull request ارسال کنید.
+
+
+---
+## 📬 Contact | تماس
+- GitHub Issues  
+- key1.lavi@gmail.com
+- Telegram: [@kewin_67](https://t.me/kewin_67)  

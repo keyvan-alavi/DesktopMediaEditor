@@ -1,39 +1,25 @@
 # Changelog
 
-## [0.3.0] - 2026-11-08
-
-### Added
-- Independent card-based tool panels (each group in its own bordered card)
-- Before / After comparison: toggle between Original and Edited preview + original thumbnail
-- Flip Horizontal & Flip Vertical
-- Auto Enhance (autocontrast + color + sharpness)
-- Center crop with ratios: Square (1:1), 16:9, 4:3
-- Active toggle style for comparison buttons
-
-### Changed
-- UI layout redesigned for a more professional feel
-- Better separation of tool groups from the main body
-- Improved responsive behavior and theme consistency
+## [0.4.1] - 2026-11-08
 
 ### Fixed
-- Theme switching left some widgets with wrong colors
-- Preview scaling issues on window resize
-
-## [0.2.0] - 2026-11-08
-
-### Added
-- Undo / Redo (up to 20 steps)
-- Live Brightness & Contrast sliders
-- Status bar, tooltips, menu bar
-- Cross-platform FFmpeg detection
-- PyInstaller spec + GitHub Actions release workflow
-- Version display and About dialog
+- Crop crash (0xC0000409) on Windows: replaced QRubberBand with custom painted selection (safer on Windows/PyQt)
 
 ### Changed
-- Modernized stylesheet and themes
-- Better error handling
+- **Modular architecture** started:
+  - `app/core/` — image_ops, workers, ffmpeg_utils
+  - `app/ui/` — main_window, preview, styles
+  - `main.py` — thin entry point only
+- build.spec updated to bundle the `app` package
+
+## [0.4.0] - 2026-11-08
+- Interactive crop, non-blocking filters, quality fixes, card UI separation
+
+## [0.3.0] - 2026-11-08
+- Card UI, before/after, flip, auto-enhance
+
+## [0.2.0] - 2026-11-08
+- Undo/Redo, packaging, GitHub Actions
 
 ## [0.1.0] - 2025-09-23
-
-### Added
-- Initial release: image filters, video trim, MP3 extract, themes, QSettings
+- Initial release

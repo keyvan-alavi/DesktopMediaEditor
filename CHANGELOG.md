@@ -1,36 +1,39 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.3.0] - 2026-11-08
+
+### Added
+- Independent card-based tool panels (each group in its own bordered card)
+- Before / After comparison: toggle between Original and Edited preview + original thumbnail
+- Flip Horizontal & Flip Vertical
+- Auto Enhance (autocontrast + color + sharpness)
+- Center crop with ratios: Square (1:1), 16:9, 4:3
+- Active toggle style for comparison buttons
+
+### Changed
+- UI layout redesigned for a more professional feel
+- Better separation of tool groups from the main body
+- Improved responsive behavior and theme consistency
+
+### Fixed
+- Theme switching left some widgets with wrong colors
+- Preview scaling issues on window resize
 
 ## [0.2.0] - 2026-11-08
 
 ### Added
-- Version number display and About section in Settings
-- Undo / Redo support for image editing (up to 20 steps)
+- Undo / Redo (up to 20 steps)
 - Live Brightness & Contrast sliders
-- Status bar with helpful messages
-- Tooltips on most buttons
-- Better cross-platform FFmpeg detection (tries system PATH first, then local folder)
-- Professional UI polish (improved spacing, modern card-style groups, better hover states, focus styles)
-- GitHub Actions workflow for automatic Windows builds and Releases
-- PyInstaller spec file for packaging
-- Improved error messages and user feedback
+- Status bar, tooltips, menu bar
+- Cross-platform FFmpeg detection
+- PyInstaller spec + GitHub Actions release workflow
+- Version display and About dialog
 
 ### Changed
-- Window title now includes version
-- More consistent bilingual labels and layout
-- Cleaner theme application and settings persistence
-- Better cache handling
-
-### Fixed
-- Hardcoded Windows-only ffmpeg.exe path
-- Some layout glitches on maximize/resize
+- Modernized stylesheet and themes
+- Better error handling
 
 ## [0.1.0] - 2025-09-23
 
 ### Added
-- Initial release
-- Image filters, quality adjustments, rotate, resize
-- Video trim and MP3 extraction
-- Multiple themes + dark mode
-- QSettings persistence
+- Initial release: image filters, video trim, MP3 extract, themes, QSettings

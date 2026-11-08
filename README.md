@@ -1,149 +1,120 @@
 # Desktop Media Editor
 
-**Version 0.2.0** | Python 3.9+ | PyQt6 | MIT License
+[![Python](https://img.shields.io/badge/Python-3.9%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green?logo=qt&logoColor=white)](https://www.riverbankcomputing.com/software/pyqt/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v0.3.0-orange?logo=github)](https://github.com/keyvan-alavi/DesktopMediaEditor/releases)
 
-**ویرایشگر رسانه دسکتاپ** – یک نرم‌افزار سبک و دو زبانه (فارسی / انگلیسی) برای ویرایش پایه تصویر و ویدیو.
+**ویرایشگر رسانه دسکتاپ** – نرم‌افزار سبک و دو زبانه (فارسی / انگلیسی) برای ویرایش پایه تصویر و ویدیو.
 
 > در ارتقای این نسخه جدید از **Grok** (نسخه رایگان) نیز استفاده شده است.
 
 ---
 
-## ✨ امکانات نسخه ۰.۲ / Features of v0.2
+## ✨ امکانات نسخه ۰.۳ / Features of v0.3
 
 ### ویرایش تصویر / Image Editing
 - باز کردن و ذخیره تصویر (PNG, JPG, WebP و ...)
-- **Undo / Redo** (تا ۲۰ مرحله)
+- **Undo / Redo** (تا ۲۵ مرحله)
 - اسلایدرهای زنده **روشنایی** و **کنتراست**
+- **مقایسه قبل/بعد**: دکمه «اصلی» و «پیش‌نمایش» + تصویر بندانگشتی اصلی
 - فیلترهای کلاسیک: Blur, Contour, Detail, Emboss, Sharpen, Grayscale, Sepia, Negative, Vintage
 - بهبود کیفیت و تنظیم رنگ
-- چرخش (۹۰° / ۱۸۰° / ۲۷۰°) و تغییر اندازه
-- بازنشانی به تصویر اصلی
+- چرخش، **آینه افقی/عمودی**، تغییر اندازه
+- **ابزار حرفه‌ای جدید**:
+  - بهبود خودکار (Auto Enhance)
+  - برش مرکزی با نسبت‌های مربع / ۱۶:۹ / ۴:۳
 
 ### ویرایش ویدیو / Video Editing
 - برش ویدیو بر اساس بازه زمانی (HH:MM:SS)
-- استخراج صدا به MP3 با کیفیت خوب
+- استخراج صدا به MP3
 - پیش‌نمایش فریم و نمایش مدت‌زمان
 
 ### رابط کاربری / User Interface
-- طراحی مدرن‌تر با آیکون‌های نمادین
-- چهار تم: Default, Dark, Blue, Green
-- تنظیم اندازه فونت
-- نوار وضعیت (Status Bar)
-- Tooltip روی دکمه‌ها
+- چیدمان **کارت‌محور** (هر گروه ابزار داخل کادر مستقل)
+- طراحی مدرن‌تر و حس نرم‌افزارهای حرفه‌ای
+- چهار تم کامل: Default, Dark, Blue, Green
+- منوی بالا + نوار وضعیت + Tooltip
 
 ### فنی / Technical
-- تشخیص خودکار FFmpeg (پوشه محلی یا سیستم)
-- ذخیره‌سازی تنظیمات با QSettings
+- تشخیص خودکار FFmpeg
 - آماده برای بسته‌بندی با PyInstaller
-- GitHub Actions برای ساخت خودکار و انتشار Release
+- GitHub Actions برای ساخت و انتشار خودکار Release
 
 ---
 
 ## 🚀 نصب و اجرا / Installation & Run
 
 ```bash
-# کلون کردن / Clone
 git clone https://github.com/keyvan-alavi/DesktopMediaEditor.git
 cd DesktopMediaEditor
-
-# نصب وابستگی‌ها / Install dependencies
 pip install -r requirements.txt
-
-# اجرا / Run
 python main.py
 ```
 
-**نیازمندی‌ها / Requirements:**
-- Python 3.9+
-- PyQt6, Pillow, moviepy, opencv-python-headless, numpy
-- FFmpeg (برای قابلیت‌های ویدیو) – یا در پوشه `ffmpeg/` قرار دهید یا در PATH سیستم نصب کنید.
+**نیازمندی‌ها:** Python 3.9+ ، PyQt6 ، Pillow ، moviepy ، opencv-python-headless ، numpy  
+**FFmpeg:** در پوشه `ffmpeg/` قرار دهید یا در PATH سیستم نصب کنید.
 
 ---
 
 ## 📦 ساخت نسخه قابل نصب و انتشار Release
 
-### ۱. ساخت دستی (روی سیستم خودتان)
+### ساخت دستی
 ```bash
 pip install pyinstaller
 pyinstaller --noconfirm build.spec
 ```
 خروجی: `dist/DesktopMediaEditor.exe`
 
-### ۲. انتشار خودکار روی GitHub Releases
-
-برای اینکه Release ساخته شود، باید **تگ** بزنید:
-
+### انتشار خودکار روی GitHub Releases
 ```bash
-# مطمئن شوید همه تغییرات push شده
 git add .
-git commit -m "Release v0.2.0"
-git push origin main   # یا master
+git commit -m "Release v0.3.0"
+git push origin main
 
-# سپس تگ بزنید و push کنید
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
-
-بعد از push کردن تگ `v0.2.0`، GitHub Actions به صورت خودکار:
-1. برنامه را با PyInstaller روی ویندوز می‌سازد
-2. فایل `.exe` را به عنوان Artifact آپلود می‌کند
-3. یک **Release** جدید در صفحه Releases گیت‌هاب ایجاد می‌کند و فایل را ضمیمه می‌کند
-
-**نکته مهم:**  
-- Actions باید در تنظیمات ریپازیتوری فعال باشد.  
-- اگر برای اولین بار است، ممکن است چند دقیقه طول بکشد تا workflow اجرا شود.  
-- می‌توانید از تب Actions وضعیت بیلد را ببینید.
-
-اگر تگ را قبلاً زده‌اید و می‌خواهید دوباره بیلد بگیرید، تگ را پاک کنید و دوباره بزنید، یا از `workflow_dispatch` در Actions استفاده کنید.
+بعد از push کردن تگ، GitHub Actions بیلد می‌گیرد و فایل را در صفحه **Releases** قرار می‌دهد.
 
 ---
 
-## 📂 ساختار پروژه / Project Structure
+## 📂 ساختار پروژه
 
 ```
 DesktopMediaEditor/
-├── main.py                 # کد اصلی برنامه
-├── build.spec              # تنظیمات PyInstaller
+├── main.py
+├── build.spec
 ├── requirements.txt
 ├── CHANGELOG.md
 ├── LICENSE
 ├── edit.ico
-├── ffmpeg/                 # (اختیاری) باینری‌های FFmpeg
-└── .github/workflows/
-    └── release.yml         # ساخت و انتشار خودکار
+├── ffmpeg/
+└── .github/workflows/release.yml
 ```
 
 ---
 
-## 🗺 نقشه راه (آینده) / Roadmap
+## 🗺 نقشه راه
 
-- [ ] ابزار Crop با انتخاب ناحیه
+- [ ] ابزار Crop آزاد با انتخاب ناحیه ماوس
 - [ ] پردازش دسته‌ای (Batch)
-- [ ] سوئیچر زبان کامل (فارسی ↔ انگلیسی)
-- [ ] افزودن واترمارک
-- [ ] تبدیل فرمت تصویر/ویدیو
+- [ ] سوئیچر زبان کامل
+- [ ] واترمارک متن/لوگو
 - [ ] بیلد لینوکس و مک
-- [ ] ماژولار کردن کد
 
 ---
 
 ## 📜 مجوز / License
 
-این پروژه تحت مجوز **MIT** منتشر شده است. جزئیات در فایل `LICENSE`.
-
-This project is licensed under the **MIT License** – see the `LICENSE` file for details.
+MIT License – جزئیات در فایل `LICENSE`.
 
 ---
 
 ## English Overview
 
-**Desktop Media Editor** is a lightweight bilingual (Persian/English) desktop application for basic image and video editing, built with Python and PyQt6.
+**Desktop Media Editor** v0.3.0 – lightweight bilingual image & video editor.
 
-**v0.2.0 highlights:**
-- Undo / Redo (up to 20 steps)
-- Live Brightness & Contrast sliders
-- More modern UI with symbolic icons
-- Better cross-platform FFmpeg detection
-- Packaging support (PyInstaller) + GitHub Actions for automatic Releases
+**New in 0.3:** Independent tool cards, before/after comparison (Original ↔ Preview), Flip H/V, Auto Enhance, center crop ratios (1:1, 16:9, 4:3), refined professional UI.
 
 > This new version upgrade was also assisted by **Grok** (free version).

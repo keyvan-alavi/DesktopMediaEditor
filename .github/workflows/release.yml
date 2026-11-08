@@ -12,18 +12,27 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show repository structure (debug)
+      - name: Detect project root
+        id: root
+        shell: pwsh
         run: |
-          echo "=== Current directory ==="
-          cd
-          echo "=== Root contents ==="
-          dir
-          echo "=== Looking for build.spec ==="
-          dir /s /b build.spec 2>nul || echo "build.spec not found in any subdirectory"
+          Write-Host "=== Repo root ==="
+          Get-ChildItem | Format-Table Name, Mode
+          if (Test-Path ".\main.py") {
+            echo "dir=." >> $env:GITHUB_OUTPUT
+            Write-Host "Project files are at repository root"
+          } elseif (Test-Path ".\DesktopMediaEditor\main.py") {
+            echo "dir=DesktopMediaEditor" >> $env:GITHUB_OUTPUT
+            Write-Host "Project files are inside DesktopMediaEditor/"
+          } else {
+            Write-Error "Cannot find main.py in root or DesktopMediaEditor/"
+            exit 1
+          }
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -31,65 +40,88 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
+        shell: pwsh
+        working-directory: ${{ steps.root.outputs.dir }}
         run: |
           python -m pip install --upgrade pip
-          # Try both possible locations for requirements.txt
-          if exist requirements.txt (
-            pip install -r requirements.txt
-          ) else if exist DesktopMediaEditor\requirements.txt (
-            pip install -r DesktopMediaEditor\requirements.txt
-          ) else (
-            echo "requirements.txt not found"
-            exit 1
-          )
+          pip install -r requirements.txt
           pip install pyinstaller
+          Write-Host "Python packages installed"
+          Get-ChildItem
 
-      - name: Locate and run PyInstaller
+      - name: Build with PyInstaller
+        shell: pwsh
+        working-directory: ${{ steps.root.outputs.dir }}
         run: |
-          # Prefer root, then common subfolder
-          if exist build.spec (
-            echo "Found build.spec in root"
-            pyinstaller --noconfirm build.spec
-          ) else if exist DesktopMediaEditor\build.spec (
-            echo "Found build.spec inside DesktopMediaEditor/"
-            cd DesktopMediaEditor
-            pyinstaller --noconfirm build.spec
-            # Move dist up so later steps find it
-            if exist dist\DesktopMediaEditor.exe (
-              mkdir ..\dist 2>nul
-              move dist\DesktopMediaEditor.exe ..\dist\
-            )
-          ) else (
-            echo "ERROR: build.spec not found in root or DesktopMediaEditor/"
-            echo "Please make sure build.spec is committed to the repository."
+          Write-Host "Building from: $(Get-Location)"
+          Get-ChildItem
+
+          # Prefer build.spec if present, otherwise use explicit one-file command
+          if (Test-Path ".\build.spec") {
+            Write-Host "Using build.spec"
+            pyinstaller --noconfirm --clean build.spec
+          } else {
+            Write-Host "build.spec missing – using CLI flags"
+            pyinstaller --noconfirm --clean --onefile --windowed `
+              --name DesktopMediaEditor `
+              --icon edit.ico `
+              --add-data "edit.ico;." `
+              --add-data "app;app" `
+              --hidden-import moviepy `
+              --hidden-import PIL `
+              --hidden-import app `
+              --hidden-import app.core `
+              --hidden-import app.core.image_ops `
+              --hidden-import app.core.workers `
+              --hidden-import app.core.ffmpeg_utils `
+              --hidden-import app.ui `
+              --hidden-import app.ui.main_window `
+              --hidden-import app.ui.preview `
+              --hidden-import app.ui.styles `
+              main.py
+          }
+
+          Write-Host "=== dist contents ==="
+          if (Test-Path ".\dist") {
+            Get-ChildItem -Recurse .\dist
+          } else {
+            Write-Error "dist/ folder was not created"
             exit 1
-          )
+          }
 
-      - name: List output
-        run: |
-          echo "=== dist folder ==="
-          dir dist 2>nul || echo "dist not found"
-          dir /s /b *.exe 2>nul || echo "No exe found"
+          if (-not (Test-Path ".\dist\DesktopMediaEditor.exe")) {
+            Write-Error "DesktopMediaEditor.exe not found in dist/"
+            Get-ChildItem -Recurse .
+            exit 1
+          }
+
+          Write-Host "Build OK: dist/DesktopMediaEditor.exe"
+          (Get-Item ".\dist\DesktopMediaEditor.exe").Length
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: DesktopMediaEditor-Windows
           path: |
-            dist/DesktopMediaEditor.exe
-            DesktopMediaEditor/dist/DesktopMediaEditor.exe
+            ${{ steps.root.outputs.dir }}/dist/DesktopMediaEditor.exe
           if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/DesktopMediaEditor.exe
-            DesktopMediaEditor/dist/DesktopMediaEditor.exe
+          files: ${{ steps.root.outputs.dir }}/dist/DesktopMediaEditor.exe
           name: Desktop Media Editor ${{ github.ref_name }}
-          generate_release_notes: true
+          body: |
+            ## Desktop Media Editor ${{ github.ref_name }}
+
+            فایل اجرایی ویندوز (`DesktopMediaEditor.exe`) به این Release ضمیمه شده است.
+
+            ### اجرا
+            1. فایل `DesktopMediaEditor.exe` را دانلود کنید
+            2. اجرا کنید (برای ویدیو بهتر است FFmpeg روی سیستم نصب باشد)
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

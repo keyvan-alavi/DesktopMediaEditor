@@ -4,6 +4,7 @@
 
 ### Fixed
 - Crop crash (0xC0000409) on Windows: replaced QRubberBand with custom painted selection (safer on Windows/PyQt)
+- **GitHub Actions Release**: workflow rewritten for PowerShell (windows-latest default shell). Previous cmd `if exist` syntax never ran correctly, so no .exe was attached to Releases.
 
 ### Changed
 - **Modular architecture** started:

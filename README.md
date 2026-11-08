@@ -1,9 +1,6 @@
 # Desktop Media Editor
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green)
-![License](https://img.shields.io/badge/License-MIT-yellow)
-![Version](https://img.shields.io/badge/Version-0.2.0-orange)
+**Version 0.2.0** | Python 3.9+ | PyQt6 | MIT License
 
 **ویرایشگر رسانه دسکتاپ** – یک نرم‌افزار سبک و دو زبانه (فارسی / انگلیسی) برای ویرایش پایه تصویر و ویدیو.
 
@@ -28,11 +25,11 @@
 - پیش‌نمایش فریم و نمایش مدت‌زمان
 
 ### رابط کاربری / User Interface
+- طراحی مدرن‌تر با آیکون‌های نمادین
 - چهار تم: Default, Dark, Blue, Green
 - تنظیم اندازه فونت
 - نوار وضعیت (Status Bar)
 - Tooltip روی دکمه‌ها
-- ظاهر تمیزتر و حرفه‌ای‌تر
 
 ### فنی / Technical
 - تشخیص خودکار FFmpeg (پوشه محلی یا سیستم)
@@ -63,22 +60,41 @@ python main.py
 
 ---
 
-## 📦 ساخت نسخه قابل نصب / Building Executable
+## 📦 ساخت نسخه قابل نصب و انتشار Release
 
-### روش دستی / Manual
+### ۱. ساخت دستی (روی سیستم خودتان)
 ```bash
 pip install pyinstaller
 pyinstaller --noconfirm build.spec
 ```
-خروجی در پوشه `dist/DesktopMediaEditor.exe` قرار می‌گیرد.
+خروجی: `dist/DesktopMediaEditor.exe`
 
-### انتشار خودکار روی GitHub / Automatic Release
-با زدن تگ نسخه، GitHub Actions به صورت خودکار بیلد ویندوز را می‌سازد و در **Releases** قرار می‌دهد:
+### ۲. انتشار خودکار روی GitHub Releases
+
+برای اینکه Release ساخته شود، باید **تگ** بزنید:
 
 ```bash
+# مطمئن شوید همه تغییرات push شده
+git add .
+git commit -m "Release v0.2.0"
+git push origin main   # یا master
+
+# سپس تگ بزنید و push کنید
 git tag v0.2.0
 git push origin v0.2.0
 ```
+
+بعد از push کردن تگ `v0.2.0`، GitHub Actions به صورت خودکار:
+1. برنامه را با PyInstaller روی ویندوز می‌سازد
+2. فایل `.exe` را به عنوان Artifact آپلود می‌کند
+3. یک **Release** جدید در صفحه Releases گیت‌هاب ایجاد می‌کند و فایل را ضمیمه می‌کند
+
+**نکته مهم:**  
+- Actions باید در تنظیمات ریپازیتوری فعال باشد.  
+- اگر برای اولین بار است، ممکن است چند دقیقه طول بکشد تا workflow اجرا شود.  
+- می‌توانید از تب Actions وضعیت بیلد را ببینید.
+
+اگر تگ را قبلاً زده‌اید و می‌خواهید دوباره بیلد بگیرید، تگ را پاک کنید و دوباره بزنید، یا از `workflow_dispatch` در Actions استفاده کنید.
 
 ---
 
@@ -103,7 +119,7 @@ DesktopMediaEditor/
 
 - [ ] ابزار Crop با انتخاب ناحیه
 - [ ] پردازش دسته‌ای (Batch)
-- [ ] پشتیبانی کامل‌تر از زبان انگلیسی (سوئیچر زبان)
+- [ ] سوئیچر زبان کامل (فارسی ↔ انگلیسی)
 - [ ] افزودن واترمارک
 - [ ] تبدیل فرمت تصویر/ویدیو
 - [ ] بیلد لینوکس و مک
@@ -126,7 +142,7 @@ This project is licensed under the **MIT License** – see the `LICENSE` file fo
 **v0.2.0 highlights:**
 - Undo / Redo (up to 20 steps)
 - Live Brightness & Contrast sliders
-- Polished modern UI with multiple themes
+- More modern UI with symbolic icons
 - Better cross-platform FFmpeg detection
 - Packaging support (PyInstaller) + GitHub Actions for automatic Releases
 

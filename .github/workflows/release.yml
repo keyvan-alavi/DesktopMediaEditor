@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
+  workflow_dispatch:   # امکان اجرای دستی از تب Actions
 
 permissions:
   contents: write
@@ -13,10 +13,10 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -31,17 +31,23 @@ jobs:
         run: |
           pyinstaller --noconfirm build.spec
 
+      - name: List output
+        run: |
+          dir dist
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: DesktopMediaEditor-Windows
           path: dist/DesktopMediaEditor.exe
+          if-no-files-found: error
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/DesktopMediaEditor.exe
+          name: Desktop Media Editor ${{ github.ref_name }}
           generate_release_notes: true
           draft: false
           prerelease: false

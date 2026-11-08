@@ -1,39 +1,101 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Desktop Media Editor
+A bilingual (Persian/English) desktop app for basic image & video editing.
+"""
+
 import sys
 import os
 import time
 import shutil
 import subprocess
+import shutil as sh
+from pathlib import Path
+
 from moviepy import VideoFileClip
 from PIL import Image, ImageFilter, ImageEnhance, ImageOps
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog, QProgressBar, QMessageBox,
     QSplitter, QGridLayout, QGroupBox, QCheckBox, QSpacerItem, QSizePolicy,
-    QComboBox, QSpinBox
+    QComboBox, QSpinBox, QSlider, QStatusBar, QToolButton, QFrame
 )
-from PyQt6.QtGui import QPixmap, QIcon
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
+from PyQt6.QtGui import QPixmap, QIcon, QAction, QFont
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QSize
 
-# تنظیم مسیر ffmpeg برای moviepy
-if getattr(sys, 'frozen', False):
-    base_dir = sys._MEIPASS
-else:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+__version__ = "0.2.0"
+APP_NAME = "Desktop Media Editor"
+ORG_NAME = "KeyvanAlavi"
 
-FFMPEG_PATH = os.path.join(base_dir, 'ffmpeg', 'ffmpeg.exe')
-FFPROBE_PATH = os.path.join(base_dir, 'ffmpeg', 'ffprobe.exe')
+# ---------------------------------------------------------------------------
+# FFmpeg discovery (cross-platform)
+# ---------------------------------------------------------------------------
+def find_ffmpeg():
+    """Try to locate ffmpeg binary. Prefer local folder, then system PATH."""
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(sys._MEIPASS)
+    else:
+        base_dir = Path(__file__).resolve().parent
 
-# تنظیم متغیرهای محیطی برای moviepy
-os.environ["FFMPEG_BINARY"] = FFMPEG_PATH
-os.environ["FFPROBE_BINARY"] = FFPROBE_PATH
+    local_candidates = [
+        base_dir / "ffmpeg" / "ffmpeg.exe",
+        base_dir / "ffmpeg" / "ffmpeg",
+        base_dir / "ffmpeg.exe",
+        base_dir / "ffmpeg",
+    ]
+    for p in local_candidates:
+        if p.exists():
+            return str(p)
 
-CACHE_DIR = 'cache'
-if not os.path.exists(CACHE_DIR):
-    os.makedirs(CACHE_DIR)
+    # Fall back to system PATH
+    system = sh.which("ffmpeg")
+    if system:
+        return system
+    return None
 
+
+def find_ffprobe():
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(sys._MEIPASS)
+    else:
+        base_dir = Path(__file__).resolve().parent
+
+    local_candidates = [
+        base_dir / "ffmpeg" / "ffprobe.exe",
+        base_dir / "ffmpeg" / "ffprobe",
+        base_dir / "ffprobe.exe",
+        base_dir / "ffprobe",
+    ]
+    for p in local_candidates:
+        if p.exists():
+            return str(p)
+
+    system = sh.which("ffprobe")
+    if system:
+        return system
+    return None
+
+
+FFMPEG_PATH = find_ffmpeg()
+FFPROBE_PATH = find_ffprobe()
+
+if FFMPEG_PATH:
+    os.environ["FFMPEG_BINARY"] = FFMPEG_PATH
+if FFPROBE_PATH:
+    os.environ["FFPROBE_BINARY"] = FFPROBE_PATH
+
+CACHE_DIR = Path("cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Background worker
+# ---------------------------------------------------------------------------
 class ProgressThread(QThread):
     progress_signal = pyqtSignal(int)
-    finished_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(object)  # path or None
+    error_signal = pyqtSignal(str)
 
     def __init__(self, task, *args):
         super().__init__()
@@ -41,20 +103,21 @@ class ProgressThread(QThread):
         self.args = args
 
     def run(self):
-        if self.task == 'trim':
-            success = self.trim_video(*self.args)
-            if success:
-                self.finished_signal.emit(self.args[3])  # output_path
-            else:
-                self.finished_signal.emit(None)
-        elif self.task == 'mp3':
-            success = self.convert_to_mp3(*self.args)
-            if success:
-                self.finished_signal.emit(self.args[1])  # output_path
-            else:
-                self.finished_signal.emit(None)
+        try:
+            if self.task == 'trim':
+                success = self.trim_video(*self.args)
+                self.finished_signal.emit(self.args[3] if success else None)
+            elif self.task == 'mp3':
+                success = self.convert_to_mp3(*self.args)
+                self.finished_signal.emit(self.args[1] if success else None)
+        except Exception as e:
+            self.error_signal.emit(str(e))
+            self.finished_signal.emit(None)
 
     def trim_video(self, input_path, start_secs, end_secs, output_path):
+        if not FFMPEG_PATH:
+            self.error_signal.emit("FFmpeg پیدا نشد. لطفاً آن را نصب کنید یا در پوشه ffmpeg قرار دهید.")
+            return False
         try:
             duration = end_secs - start_secs
             cmd = [
@@ -67,209 +130,292 @@ class ProgressThread(QThread):
                 '-y',
                 output_path
             ]
-            subprocess.run(cmd, check=True, capture_output=True)
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             self.progress_signal.emit(100)
-            return os.path.exists(output_path)
+            return Path(output_path).exists()
+        except subprocess.CalledProcessError as e:
+            self.error_signal.emit(e.stderr or str(e))
+            return False
         except Exception as e:
-            print(f"Error in video trimming: {str(e)}")
+            self.error_signal.emit(str(e))
             return False
 
     def convert_to_mp3(self, input_path, output_path):
+        if not FFMPEG_PATH:
+            self.error_signal.emit("FFmpeg پیدا نشد. لطفاً آن را نصب کنید یا در پوشه ffmpeg قرار دهید.")
+            return False
         try:
-            cmd = [FFMPEG_PATH, '-i', input_path, '-vn', '-acodec', 'mp3', '-q:a', '0', output_path]
-            subprocess.run(cmd, check=True, capture_output=True)
+            cmd = [
+                FFMPEG_PATH, '-i', input_path,
+                '-vn', '-acodec', 'libmp3lame', '-q:a', '2',
+                '-y', output_path
+            ]
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
             self.progress_signal.emit(100)
             return True
         except Exception as e:
-            print(f"Error in MP3 conversion: {str(e)}")
+            self.error_signal.emit(str(e))
             return False
 
+
+# ---------------------------------------------------------------------------
+# Main Window
+# ---------------------------------------------------------------------------
 class MediaEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ویرایشگر تصویر و ویدئو")
+        self.setWindowTitle(f"{APP_NAME}  v{__version__}")
         self.setWindowIcon(QIcon("edit.ico"))
-        self.setGeometry(100, 100, 1000, 600)
-        self.settings = QSettings("xAI", "MediaEditor")
+        self.setGeometry(80, 60, 1100, 680)
+        self.setMinimumSize(900, 560)
 
-        # Load saved settings
+        self.settings = QSettings(ORG_NAME, "MediaEditor")
+
+        # Load settings
         self.is_dark_mode = self.settings.value("dark_mode", False, type=bool)
         self.theme = self.settings.value("theme", "Default", type=str)
         self.font_size = self.settings.value("font_size", 13, type=int)
 
-        # Define themes
+        # Themes – refined colors
         self.themes = {
             "Default": {
-                "main_bg": "#faf9f6",
-                "button_bg": "#00bfa5",
-                "button_hover": "#00997a",
-                "text_color": "#333",
-                "border_color": "#ddd",
-                "tab_bg": "#f0f0f0",
-                "tab_selected_bg": "white",
-                "tab_selected_border": "#00bfa5",
-                "preview_bg": "white"
+                "main_bg": "#f7f8fa",
+                "button_bg": "#0d9488",
+                "button_hover": "#0f766e",
+                "button_pressed": "#115e59",
+                "text_color": "#1e293b",
+                "muted_text": "#64748b",
+                "border_color": "#e2e8f0",
+                "tab_bg": "#e2e8f0",
+                "tab_selected_bg": "#ffffff",
+                "tab_selected_border": "#0d9488",
+                "preview_bg": "#ffffff",
+                "group_bg": "#ffffff",
+                "accent": "#0d9488",
             },
             "Dark": {
-                "main_bg": "#2c2c2c",
-                "button_bg": "#00bfa5",
-                "button_hover": "#00997a",
-                "text_color": "#ddd",
-                "border_color": "#444",
-                "tab_bg": "#3c3c3c",
-                "tab_selected_bg": "#2c2c2c",
-                "tab_selected_border": "#00bfa5",
-                "preview_bg": "#3c3c3c"
+                "main_bg": "#0f172a",
+                "button_bg": "#14b8a6",
+                "button_hover": "#0d9488",
+                "button_pressed": "#0f766e",
+                "text_color": "#e2e8f0",
+                "muted_text": "#94a3b8",
+                "border_color": "#1e293b",
+                "tab_bg": "#1e293b",
+                "tab_selected_bg": "#0f172a",
+                "tab_selected_border": "#14b8a6",
+                "preview_bg": "#1e293b",
+                "group_bg": "#1e293b",
+                "accent": "#14b8a6",
             },
             "Blue": {
-                "main_bg": "#e3f2fd",
-                "button_bg": "#1976d2",
-                "button_hover": "#1565c0",
-                "text_color": "#333",
-                "border_color": "#bbdefb",
-                "tab_bg": "#bbdefb",
-                "tab_selected_bg": "white",
-                "tab_selected_border": "#1976d2",
-                "preview_bg": "white"
+                "main_bg": "#eff6ff",
+                "button_bg": "#2563eb",
+                "button_hover": "#1d4ed8",
+                "button_pressed": "#1e40af",
+                "text_color": "#1e3a8a",
+                "muted_text": "#64748b",
+                "border_color": "#bfdbfe",
+                "tab_bg": "#dbeafe",
+                "tab_selected_bg": "#ffffff",
+                "tab_selected_border": "#2563eb",
+                "preview_bg": "#ffffff",
+                "group_bg": "#ffffff",
+                "accent": "#2563eb",
             },
             "Green": {
-                "main_bg": "#e8f5e9",
-                "button_bg": "#388e3c",
-                "button_hover": "#2e7d32",
-                "text_color": "#333",
-                "border_color": "#c8e6c9",
-                "tab_bg": "#c8e6c9",
-                "tab_selected_bg": "white",
-                "tab_selected_border": "#388e3c",
-                "preview_bg": "white"
-            }
+                "main_bg": "#f0fdf4",
+                "button_bg": "#16a34a",
+                "button_hover": "#15803d",
+                "button_pressed": "#166534",
+                "text_color": "#14532d",
+                "muted_text": "#64748b",
+                "border_color": "#bbf7d0",
+                "tab_bg": "#dcfce7",
+                "tab_selected_bg": "#ffffff",
+                "tab_selected_border": "#16a34a",
+                "preview_bg": "#ffffff",
+                "group_bg": "#ffffff",
+                "accent": "#16a34a",
+            },
         }
 
-        # Define filters and quality buttons
         self.filters = [
             ("Blur", "BLUR"), ("Contour", "CONTOUR"), ("Detail", "DETAIL"),
             ("Emboss", "EMBOSS"), ("Sharpen", "SHARPEN"), ("Grayscale", "GRAYSCALE"),
             ("Sepia", "SEPIA"), ("Negative", "NEGATIVE"), ("Vintage", "VINTAGE"),
         ]
-        self.quality = [
-            ("Brightness High", "BRIGHTNESS_H"), ("Brightness Low", "BRIGHTNESS_L"),
-            ("Contrast High", "CONTRAST_H"), ("Contrast Low", "CONTRAST_L"),
-            ("Enhance Quality High", "ENHANCE_QUALITY_H"), ("Enhance Quality Medium", "ENHANCE_QUALITY_M"),
-            ("Color Adjust High", "COLOR_ADJUST_H"), ("Color Adjust Low", "COLOR_ADJUST_L"),
+        self.quality_buttons = [
+            ("Enhance High", "ENHANCE_QUALITY_H"),
+            ("Enhance Medium", "ENHANCE_QUALITY_M"),
+            ("Color Boost", "COLOR_ADJUST_H"),
+            ("Color Soft", "COLOR_ADJUST_L"),
         ]
 
-        self.apply_theme()
-
-        self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
-
-        self.image_tab = QWidget()
-        self.video_tab = QWidget()
-        self.settings_tab = QWidget()
-
-        self.tab_widget.addTab(self.image_tab, "ویرایش تصویر")
-        self.tab_widget.addTab(self.video_tab, "ویرایش ویدئو")
-        self.tab_widget.addTab(self.settings_tab, "تنظیمات")
-
-        self.init_image_tab()
-        self.init_video_tab()
-        self.init_settings_tab()
-
+        # Image state
         self.original_image = None
         self.current_image = None
         self.current_image_path = None
+        self.history = []          # list of PIL Images
+        self.history_index = -1
+        self.max_history = 20
+
+        # Video state
         self.current_video_path = None
         self.video_duration = 0.0
-        self.history = []
-        self.current_columns = 2  # Default to 2 columns
 
+        self.current_columns = 2
+
+        self.apply_theme()
+        self._build_ui()
+        self._update_undo_redo_buttons()
+
+        # Status
+        if FFMPEG_PATH:
+            self.statusBar().showMessage(f"آماده • FFmpeg: {Path(FFMPEG_PATH).name}", 5000)
+        else:
+            self.statusBar().showMessage("هشدار: FFmpeg پیدا نشد – قابلیت‌های ویدیو محدود خواهند بود", 8000)
+
+    # ------------------------------------------------------------------
+    # Theme & Styles
+    # ------------------------------------------------------------------
     def apply_theme(self):
-        theme = self.themes[self.theme]
+        t = self.themes[self.theme]
         stylesheet = f"""
             QMainWindow {{
-                background-color: {theme['main_bg']};
-                font-family: 'Segoe UI', sans-serif;
+                background-color: {t['main_bg']};
+                font-family: 'Segoe UI', 'Vazirmatn', 'Tahoma', sans-serif;
                 font-size: {self.font_size}px;
+                color: {t['text_color']};
+            }}
+            QStatusBar {{
+                background-color: {t['group_bg']};
+                color: {t['muted_text']};
+                border-top: 1px solid {t['border_color']};
+                font-size: {self.font_size - 1}px;
             }}
             QPushButton {{
-                background-color: {theme['button_bg']};
+                background-color: {t['button_bg']};
                 color: white;
                 border: none;
                 border-radius: 8px;
                 padding: 8px 14px;
                 font-size: {self.font_size}px;
                 font-weight: 600;
-                transition: background-color 0.3s ease;
             }}
             QPushButton:hover {{
-                background-color: {theme['button_hover']};
+                background-color: {t['button_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {t['button_pressed']};
+            }}
+            QPushButton:disabled {{
+                background-color: {t['border_color']};
+                color: {t['muted_text']};
+            }}
+            QToolButton {{
+                background-color: {t['button_bg']};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 600;
+            }}
+            QToolButton:hover {{
+                background-color: {t['button_hover']};
+            }}
+            QToolButton:disabled {{
+                background-color: {t['border_color']};
+                color: {t['muted_text']};
             }}
             QLabel {{
                 font-size: {self.font_size}px;
-                color: {theme['text_color']};
+                color: {t['text_color']};
                 font-weight: 500;
             }}
-            QLineEdit {{
-                border: 1px solid {theme['border_color']};
-                border-radius: 6px;
-                padding: 6px;
-                background-color: {theme['preview_bg']};
+            QLineEdit, QSpinBox, QComboBox {{
+                border: 1px solid {t['border_color']};
+                border-radius: 7px;
+                padding: 6px 10px;
+                background-color: {t['preview_bg']};
                 font-size: {self.font_size}px;
-                color: {theme['text_color']};
+                color: {t['text_color']};
+                selection-background-color: {t['accent']};
+            }}
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{
+                border: 2px solid {t['accent']};
+            }}
+            QSlider::groove:horizontal {{
+                height: 6px;
+                background: {t['border_color']};
+                border-radius: 3px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {t['accent']};
+                width: 16px;
+                height: 16px;
+                margin: -5px 0;
+                border-radius: 8px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {t['accent']};
+                border-radius: 3px;
             }}
             QProgressBar {{
-                background-color: {theme['border_color']};
+                background-color: {t['border_color']};
                 border-radius: 6px;
                 text-align: center;
-                font-size: {self.font_size-2}px;
-                color: {theme['text_color']};
+                font-size: {self.font_size - 2}px;
+                color: {t['text_color']};
+                height: 18px;
             }}
             QProgressBar::chunk {{
-                background-color: {theme['button_bg']};
+                background-color: {t['button_bg']};
                 border-radius: 6px;
             }}
             QGroupBox {{
-                border: 1px solid {theme['border_color']};
-                border-radius: 8px;
-                padding: 10px;
-                margin-top: 10px;
-                font-weight: bold;
-                color: {theme['text_color']};
+                background-color: {t['group_bg']};
+                border: 1px solid {t['border_color']};
+                border-radius: 10px;
+                margin-top: 14px;
+                padding: 12px 10px 10px 10px;
+                font-weight: 700;
+                color: {t['text_color']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 12px;
+                padding: 0 6px;
             }}
             QTabWidget::pane {{
-                border: 1px solid {theme['border_color']};
-                border-radius: 8px;
-                background-color: {theme['preview_bg']};
+                border: 1px solid {t['border_color']};
+                border-radius: 10px;
+                background-color: {t['preview_bg']};
+                top: -1px;
             }}
             QTabBar::tab {{
-                background-color: {theme['tab_bg']};
-                border: 1px solid {theme['border_color']};
+                background-color: {t['tab_bg']};
+                border: 1px solid {t['border_color']};
                 border-bottom: none;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
-                padding: 8px 16px;
+                padding: 9px 18px;
                 font-size: {self.font_size}px;
-                color: {theme['text_color']};
+                color: {t['text_color']};
+                margin-right: 3px;
             }}
             QTabBar::tab:selected {{
-                background-color: {theme['tab_selected_bg']};
-                border-bottom: 2px solid {theme['tab_selected_border']};
+                background-color: {t['tab_selected_bg']};
+                border-bottom: 3px solid {t['tab_selected_border']};
+                font-weight: 700;
             }}
-            QComboBox {{
-                border: 1px solid {theme['border_color']};
-                border-radius: 6px;
-                padding: 6px;
-                background-color: {theme['preview_bg']};
-                font-size: {self.font_size}px;
-                color: {theme['text_color']};
+            QTabBar::tab:hover:!selected {{
+                background-color: {t['preview_bg']};
             }}
-            QSpinBox {{
-                border: 1px solid {theme['border_color']};
-                border-radius: 6px;
-                padding: 6px;
-                background-color: {theme['preview_bg']};
-                font-size: {self.font_size}px;
-                color: {theme['text_color']};
+            QFrame#previewFrame {{
+                background-color: {t['preview_bg']};
+                border: 1px solid {t['border_color']};
+                border-radius: 10px;
             }}
         """
         self.setStyleSheet(stylesheet)
@@ -279,459 +425,625 @@ class MediaEditor(QMainWindow):
         self.settings.setValue("theme", self.theme)
         self.settings.setValue("font_size", self.font_size)
         self.apply_theme()
+        self.statusBar().showMessage("تنظیمات ذخیره شد", 2500)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.tab_widget.currentWidget() == self.image_tab:
-            self.update_image_tab_layout()
+    # ------------------------------------------------------------------
+    # UI Construction
+    # ------------------------------------------------------------------
+    def _build_ui(self):
+        self.tab_widget = QTabWidget()
+        self.setCentralWidget(self.tab_widget)
 
-    def update_image_tab_layout(self):
-        num_columns = 3 if self.isMaximized() else 2
-        if num_columns == self.current_columns:
-            return  # No need to update if column count hasn't changed
+        self.image_tab = QWidget()
+        self.video_tab = QWidget()
+        self.settings_tab = QWidget()
 
-        self.current_columns = num_columns
+        self.tab_widget.addTab(self.image_tab, "ویرایش تصویر")
+        self.tab_widget.addTab(self.video_tab, "ویرایش ویدیو")
+        self.tab_widget.addTab(self.settings_tab, "تنظیمات")
 
-        # Update filters group
-        filters_group = self.image_tab.findChild(QGroupBox, "filters_group")
-        if filters_group and filters_group.layout():
-            # Remove existing buttons
-            while filters_group.layout().count():
-                item = filters_group.layout().takeAt(0)
-                if item.widget():
-                    item.widget().setParent(None)
-            # Recreate buttons with new column count
-            for i, (name, code) in enumerate(self.filters):
-                btn = QPushButton(name)
-                btn.setIcon(QIcon.fromTheme("image-x-generic"))
-                btn.clicked.connect(lambda _, c=code: self.apply_filter(c))
-                filters_group.layout().addWidget(btn, i // num_columns, i % num_columns)
+        self.init_image_tab()
+        self.init_video_tab()
+        self.init_settings_tab()
 
-        # Update quality group
-        quality_group = self.image_tab.findChild(QGroupBox, "quality_group")
-        if quality_group and quality_group.layout():
-            # Remove existing buttons
-            while quality_group.layout().count():
-                item = quality_group.layout().takeAt(0)
-                if item.widget():
-                    item.widget().setParent(None)
-            # Recreate buttons with new column count
-            for i, (name, code) in enumerate(self.quality):
-                btn = QPushButton(name)
-                btn.setIcon(QIcon.fromTheme("preferences-desktop-color"))
-                btn.clicked.connect(lambda _, c=code: self.apply_filter(c))
-                quality_group.layout().addWidget(btn, i // num_columns, i % num_columns)
+        # Status bar
+        self.setStatusBar(QStatusBar())
 
     def init_image_tab(self):
-        main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout = QHBoxLayout(self.image_tab)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(12)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left panel: Filters
-        left_widget = QWidget()
-        left_widget.setObjectName("left_widget")
-        left_layout = QVBoxLayout()
+        # ---------- Left controls ----------
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(5)
-        left_widget.setLayout(left_layout)
+        left_layout.setSpacing(10)
 
+        # File actions
+        file_group = QGroupBox("فایل")
+        file_l = QHBoxLayout()
+        self.btn_open_image = QPushButton("باز کردن تصویر")
+        self.btn_open_image.setToolTip("یک تصویر انتخاب کنید (Ctrl+O)")
+        self.btn_open_image.clicked.connect(self.open_image)
+        self.btn_save_image = QPushButton("ذخیره")
+        self.btn_save_image.setToolTip("ذخیره تصویر ویرایش‌شده")
+        self.btn_save_image.clicked.connect(self.save_image)
+        self.btn_save_image.setEnabled(False)
+        file_l.addWidget(self.btn_open_image)
+        file_l.addWidget(self.btn_save_image)
+        file_group.setLayout(file_l)
+        left_layout.addWidget(file_group)
+
+        # Undo / Redo + Reset
+        hist_group = QGroupBox("تاریخچه")
+        hist_l = QHBoxLayout()
+        self.btn_undo = QPushButton("↩ Undo")
+        self.btn_undo.setToolTip("بازگشت یک مرحله (Ctrl+Z)")
+        self.btn_undo.clicked.connect(self.undo)
+        self.btn_redo = QPushButton("Redo ↪")
+        self.btn_redo.setToolTip("جلو رفتن یک مرحله (Ctrl+Y)")
+        self.btn_redo.clicked.connect(self.redo)
+        self.btn_reset = QPushButton("بازنشانی")
+        self.btn_reset.setToolTip("بازگشت به تصویر اصلی")
+        self.btn_reset.clicked.connect(self.reset_image)
+        hist_l.addWidget(self.btn_undo)
+        hist_l.addWidget(self.btn_redo)
+        hist_l.addWidget(self.btn_reset)
+        hist_group.setLayout(hist_l)
+        left_layout.addWidget(hist_group)
+
+        # Live adjustments
+        adj_group = QGroupBox("تنظیمات زنده")
+        adj_l = QVBoxLayout()
+        adj_l.setSpacing(8)
+
+        # Brightness
+        br_row = QHBoxLayout()
+        br_row.addWidget(QLabel("روشنایی"))
+        self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.brightness_slider.setRange(-100, 100)
+        self.brightness_slider.setValue(0)
+        self.brightness_slider.setToolTip("مقدار روشنایی را تغییر دهید")
+        self.brightness_slider.valueChanged.connect(self._on_live_adjust)
+        self.brightness_value = QLabel("0")
+        self.brightness_value.setFixedWidth(30)
+        br_row.addWidget(self.brightness_slider)
+        br_row.addWidget(self.brightness_value)
+        adj_l.addLayout(br_row)
+
+        # Contrast
+        ct_row = QHBoxLayout()
+        ct_row.addWidget(QLabel("کنتراست"))
+        self.contrast_slider = QSlider(Qt.Orientation.Horizontal)
+        self.contrast_slider.setRange(-100, 100)
+        self.contrast_slider.setValue(0)
+        self.contrast_slider.setToolTip("مقدار کنتراست را تغییر دهید")
+        self.contrast_slider.valueChanged.connect(self._on_live_adjust)
+        self.contrast_value = QLabel("0")
+        self.contrast_value.setFixedWidth(30)
+        ct_row.addWidget(self.contrast_slider)
+        ct_row.addWidget(self.contrast_value)
+        adj_l.addLayout(ct_row)
+
+        btn_apply_live = QPushButton("اعمال تنظیمات زنده")
+        btn_apply_live.setToolTip("مقدار فعلی اسلایدرها را روی تصویر اعمال و در تاریخچه ذخیره می‌کند")
+        btn_apply_live.clicked.connect(self.apply_live_adjustments)
+        adj_l.addWidget(btn_apply_live)
+
+        adj_group.setLayout(adj_l)
+        left_layout.addWidget(adj_group)
+
+        # Filters
         filters_group = QGroupBox("فیلترها")
         filters_group.setObjectName("filters_group")
         filters_layout = QGridLayout()
-        filters_layout.setSpacing(5)
-        num_columns = 3 if self.isMaximized() else 2
-        self.current_columns = num_columns
+        filters_layout.setSpacing(6)
+        num_columns = 3
         for i, (name, code) in enumerate(self.filters):
             btn = QPushButton(name)
-            btn.setIcon(QIcon.fromTheme("image-x-generic"))
+            btn.setToolTip(f"اعمال فیلتر {name}")
             btn.clicked.connect(lambda _, c=code: self.apply_filter(c))
             filters_layout.addWidget(btn, i // num_columns, i % num_columns)
         filters_group.setLayout(filters_layout)
         left_layout.addWidget(filters_group)
 
-        quality_group = QGroupBox("کیفیت")
+        # Quality / Enhance
+        quality_group = QGroupBox("بهبود کیفیت")
         quality_group.setObjectName("quality_group")
         quality_layout = QGridLayout()
-        quality_layout.setSpacing(5)
-        for i, (name, code) in enumerate(self.quality):
+        quality_layout.setSpacing(6)
+        for i, (name, code) in enumerate(self.quality_buttons):
             btn = QPushButton(name)
-            btn.setIcon(QIcon.fromTheme("preferences-desktop-color"))
+            btn.setToolTip(name)
             btn.clicked.connect(lambda _, c=code: self.apply_filter(c))
-            quality_layout.addWidget(btn, i // num_columns, i % num_columns)
+            quality_layout.addWidget(btn, i // 2, i % 2)
         quality_group.setLayout(quality_layout)
         left_layout.addWidget(quality_group)
 
-        rotates_group = QGroupBox("چرخش")
-        rotates_layout = QHBoxLayout()
-        rotates_layout.setSpacing(5)
-        rotates = [
-            ("Rotate 90°", "ROTATE_N"), ("Rotate 180°", "ROTATE_S"), ("Rotate 270°", "ROTATE_D"),
-        ]
-        for name, code in rotates:
+        # Rotate & Resize
+        transform_group = QGroupBox("چرخش و اندازه")
+        transform_l = QVBoxLayout()
+        rot_row = QHBoxLayout()
+        for name, code in [("۹۰°", "ROTATE_N"), ("۱۸۰°", "ROTATE_S"), ("۲۷۰°", "ROTATE_D")]:
             btn = QPushButton(name)
-            btn.setIcon(QIcon.fromTheme("object-rotate-right"))
+            btn.setToolTip(f"چرخش {name}")
             btn.clicked.connect(lambda _, c=code: self.apply_filter(c))
-            rotates_layout.addWidget(btn)
-        rotates_group.setLayout(rotates_layout)
-        left_layout.addWidget(rotates_group)
+            rot_row.addWidget(btn)
+        transform_l.addLayout(rot_row)
 
-        resizes_group = QGroupBox("سایز")
-        resizes_layout = QHBoxLayout()
-        resizes_layout.setSpacing(5)
-        resizes = [
-            ("Resize Small", "RESIZE_S"), ("Resize Large", "RESIZE_L"),
-        ]
-        for name, code in resizes:
+        size_row = QHBoxLayout()
+        for name, code in [("کوچک‌تر", "RESIZE_S"), ("بزرگ‌تر", "RESIZE_L")]:
             btn = QPushButton(name)
-            btn.setIcon(QIcon.fromTheme("transform-scale"))
+            btn.setToolTip(name)
             btn.clicked.connect(lambda _, c=code: self.apply_filter(c))
-            resizes_layout.addWidget(btn)
-        resizes_group.setLayout(resizes_layout)
-        left_layout.addWidget(resizes_group)
+            size_row.addWidget(btn)
+        transform_l.addLayout(size_row)
+        transform_group.setLayout(transform_l)
+        left_layout.addWidget(transform_group)
 
-        left_layout.addItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        left_layout.addStretch()
+        splitter.addWidget(left)
 
-        splitter.addWidget(left_widget)
-
-        # Right panel: Previews and buttons
-        right_widget = QWidget()
-        right_layout = QVBoxLayout()
+        # ---------- Right preview ----------
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
-        right_widget.setLayout(right_layout)
 
-        self.image_preview_label = QLabel("پیش‌نمایش اصلی")
+        preview_frame = QFrame()
+        preview_frame.setObjectName("previewFrame")
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.image_preview_label = QLabel("تصویری انتخاب نشده\nبرای شروع روی «باز کردن تصویر» کلیک کنید")
         self.image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_preview_label.setStyleSheet("border: 1px solid #dee2e6; border-radius: 10px; background-color: white; padding: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);")
-        self.image_preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.image_preview_label.setMinimumSize(420, 360)
+        self.image_preview_label.setStyleSheet("font-size: 14px;")
+        preview_layout.addWidget(self.image_preview_label)
 
-        self.edited_image_preview_label = QLabel("پیش‌نمایش ویرایش‌شده")
-        self.edited_image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.edited_image_preview_label.setStyleSheet("border: 1px solid #dee2e6; border-radius: 10px; background-color: white; padding: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);")
-        self.edited_image_preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        right_layout.addWidget(preview_frame)
+        splitter.addWidget(right)
 
-        previews_layout = QHBoxLayout()
-        previews_layout.setSpacing(10)
-        previews_layout.addWidget(self.image_preview_label)
-        previews_layout.addWidget(self.edited_image_preview_label)
-        right_layout.addLayout(previews_layout, stretch=1)
-
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(5)
-        undo_btn = QPushButton("لغو آخرین تغییر")
-        undo_btn.setIcon(QIcon.fromTheme("edit-undo"))
-        undo_btn.clicked.connect(self.undo_filter)
-        reset_btn = QPushButton("بازنشانی تغییرات")
-        reset_btn.setIcon(QIcon.fromTheme("edit-clear"))
-        reset_btn.clicked.connect(self.reset_filters)
-        select_btn = QPushButton("انتخاب تصویر")
-        select_btn.setIcon(QIcon.fromTheme("folder-open"))
-        select_btn.clicked.connect(self.select_image)
-        save_btn = QPushButton("ذخیره تصویر")
-        save_btn.setIcon(QIcon.fromTheme("document-save"))
-        save_btn.clicked.connect(self.save_edited_image)
-        actions_layout.addWidget(undo_btn)
-        actions_layout.addWidget(reset_btn)
-        actions_layout.addWidget(select_btn)
-        actions_layout.addWidget(save_btn)
-        right_layout.addLayout(actions_layout)
-
-        splitter.addWidget(right_widget)
-        splitter.setSizes([250, 950])
-
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
         main_layout.addWidget(splitter)
-        self.image_tab.setLayout(main_layout)
-
-    def save_edited_image(self):
-        if not self.current_image:
-            QMessageBox.warning(self, "خطا", "هیچ تصویری برای ذخیره وجود ندارد.")
-            return
-
-        save_path, _ = QFileDialog.getSaveFileName(self, "ذخیره تصویر ویرایش‌شده", "edited_image.png",
-                                                   "Image files (*.png *.jpg *.bmp)")
-        if save_path:
-            try:
-                self.current_image.save(save_path)
-                QMessageBox.information(self, "موفق", f"تصویر در {save_path} ذخیره شد.")
-            except Exception as ex:
-                QMessageBox.warning(self, "خطا", f"خطا در ذخیره تصویر: {ex}")
 
     def init_video_tab(self):
-        main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout = QHBoxLayout(self.video_tab)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(12)
+
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left panel: Buttons
-        left_widget = QWidget()
-        left_layout = QVBoxLayout()
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(5)
-        left_widget.setLayout(left_layout)
+        # Left
+        left = QWidget()
+        left_l = QVBoxLayout(left)
+        left_l.setContentsMargins(0, 0, 0, 0)
+        left_l.setSpacing(10)
 
-        select_video_btn = QPushButton("انتخاب ویدیو")
-        select_video_btn.setIcon(QIcon.fromTheme("folder-videos"))
-        select_video_btn.clicked.connect(self.select_video)
-        left_layout.addWidget(select_video_btn)
+        file_group = QGroupBox("فایل ویدیو")
+        file_l = QVBoxLayout()
+        self.btn_open_video = QPushButton("باز کردن ویدیو")
+        self.btn_open_video.setToolTip("یک فایل ویدیو انتخاب کنید")
+        self.btn_open_video.clicked.connect(self.open_video)
+        file_l.addWidget(self.btn_open_video)
+        self.video_info_label = QLabel("ویدیویی انتخاب نشده")
+        self.video_info_label.setWordWrap(True)
+        file_l.addWidget(self.video_info_label)
+        file_group.setLayout(file_l)
+        left_l.addWidget(file_group)
 
-        convert_mp3_btn = QPushButton("تبدیل به MP3")
-        convert_mp3_btn.setIcon(QIcon.fromTheme("audio-x-generic"))
-        convert_mp3_btn.clicked.connect(self.start_convert_to_mp3)
-        left_layout.addWidget(convert_mp3_btn)
+        # Trim
+        trim_group = QGroupBox("برش ویدیو")
+        trim_l = QVBoxLayout()
+        time_row = QHBoxLayout()
+        time_row.addWidget(QLabel("شروع (HH:MM:SS)"))
+        self.trim_start_input = QLineEdit("00:00:00")
+        self.trim_start_input.setPlaceholderText("00:00:00")
+        time_row.addWidget(self.trim_start_input)
+        trim_l.addLayout(time_row)
 
-        left_layout.addItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
+        time_row2 = QHBoxLayout()
+        time_row2.addWidget(QLabel("پایان (HH:MM:SS)"))
+        self.trim_end_input = QLineEdit("00:00:10")
+        self.trim_end_input.setPlaceholderText("00:00:10")
+        time_row2.addWidget(self.trim_end_input)
+        trim_l.addLayout(time_row2)
 
-        splitter.addWidget(left_widget)
+        self.btn_trim = QPushButton("برش و ذخیره")
+        self.btn_trim.setToolTip("ویدیو را در بازه مشخص برش بزنید")
+        self.btn_trim.clicked.connect(self.start_trim_video)
+        trim_l.addWidget(self.btn_trim)
+        trim_group.setLayout(trim_l)
+        left_l.addWidget(trim_group)
 
-        # Right panel: Preview and trim
-        right_widget = QWidget()
-        right_layout = QVBoxLayout()
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
-        right_widget.setLayout(right_layout)
-
-        self.video_status_label = QLabel("ویدیو انتخاب نشده")
-        right_layout.addWidget(self.video_status_label)
-
-        self.video_preview_label = QLabel("پیش‌نمایش ویدیو")
-        self.video_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_preview_label.setStyleSheet("border: 1px solid #dee2e6; border-radius: 10px; background-color: white; padding: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);")
-        self.video_preview_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right_layout.addWidget(self.video_preview_label, stretch=1)
+        # MP3
+        mp3_group = QGroupBox("استخراج صدا")
+        mp3_l = QVBoxLayout()
+        self.btn_mp3 = QPushButton("تبدیل به MP3")
+        self.btn_mp3.setToolTip("صدای ویدیو را به فایل MP3 استخراج کنید")
+        self.btn_mp3.clicked.connect(self.start_convert_to_mp3)
+        mp3_l.addWidget(self.btn_mp3)
+        mp3_group.setLayout(mp3_l)
+        left_l.addWidget(mp3_group)
 
         self.video_progress = QProgressBar()
         self.video_progress.setVisible(False)
-        right_layout.addWidget(self.video_progress)
+        left_l.addWidget(self.video_progress)
 
-        trim_group = QGroupBox("برش ویدیو")
-        trim_layout = QVBoxLayout()
-        trim_layout.setSpacing(5)
-        trim_inputs_layout = QHBoxLayout()
-        trim_inputs_layout.setSpacing(5)
-        self.trim_start_input = QLineEdit("00:00:00")
-        self.trim_start_input.setPlaceholderText("شروع (HH:MM:SS)")
-        self.trim_end_input = QLineEdit("00:00:00")
-        self.trim_end_input.setPlaceholderText("پایان (HH:MM:SS)")
-        trim_inputs_layout.addWidget(self.trim_start_input)
-        trim_inputs_layout.addWidget(self.trim_end_input)
-        trim_layout.addLayout(trim_inputs_layout)
+        left_l.addStretch()
+        splitter.addWidget(left)
 
-        trim_btn = QPushButton("اعمال برش")
-        trim_btn.setIcon(QIcon.fromTheme("edit-cut"))
-        trim_btn.clicked.connect(self.start_trim_video)
-        trim_layout.addWidget(trim_btn)
-        trim_group.setLayout(trim_layout)
-        right_layout.addWidget(trim_group)
+        # Right preview
+        right = QWidget()
+        right_l = QVBoxLayout(right)
+        right_l.setContentsMargins(0, 0, 0, 0)
 
-        splitter.addWidget(right_widget)
-        splitter.setSizes([250, 950])
+        preview_frame = QFrame()
+        preview_frame.setObjectName("previewFrame")
+        preview_layout = QVBoxLayout(preview_frame)
+        preview_layout.setContentsMargins(8, 8, 8, 8)
 
+        self.video_preview_label = QLabel("ویدیویی انتخاب نشده")
+        self.video_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_preview_label.setMinimumSize(420, 360)
+        preview_layout.addWidget(self.video_preview_label)
+
+        right_l.addWidget(preview_frame)
+        splitter.addWidget(right)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
         main_layout.addWidget(splitter)
-        self.video_tab.setLayout(main_layout)
 
     def init_settings_tab(self):
-        layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        layout = QVBoxLayout(self.settings_tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
 
-        settings_group = QGroupBox("تنظیمات ظاهری")
-        settings_layout = QVBoxLayout()
-        settings_layout.setSpacing(10)
+        # Theme
+        theme_group = QGroupBox("تم و ظاهر")
+        theme_l = QVBoxLayout()
 
-        # Theme selection
-        theme_layout = QHBoxLayout()
-        theme_label = QLabel("تم:")
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("تم:"))
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(self.themes.keys())
+        self.theme_combo.addItems(["Default", "Dark", "Blue", "Green"])
         self.theme_combo.setCurrentText(self.theme)
-        self.theme_combo.currentTextChanged.connect(self.change_theme)
-        theme_layout.addWidget(theme_label)
-        theme_layout.addWidget(self.theme_combo)
-        settings_layout.addLayout(theme_layout)
+        self.theme_combo.currentTextChanged.connect(self._on_theme_changed)
+        row1.addWidget(self.theme_combo)
+        row1.addStretch()
+        theme_l.addLayout(row1)
 
-        # Font size selection
-        font_size_layout = QHBoxLayout()
-        font_size_label = QLabel("اندازه فونت:")
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(10, 20)
-        self.font_size_spin.setValue(self.font_size)
-        self.font_size_spin.valueChanged.connect(self.change_font_size)
-        font_size_layout.addWidget(font_size_label)
-        font_size_layout.addWidget(self.font_size_spin)
-        settings_layout.addLayout(font_size_layout)
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("اندازه فونت:"))
+        self.font_spin = QSpinBox()
+        self.font_spin.setRange(10, 20)
+        self.font_spin.setValue(self.font_size)
+        self.font_spin.valueChanged.connect(self._on_font_changed)
+        row2.addWidget(self.font_spin)
+        row2.addStretch()
+        theme_l.addLayout(row2)
 
-        # Dark mode toggle
-        self.dark_mode_checkbox = QCheckBox("حالت تاریک")
-        self.dark_mode_checkbox.setChecked(self.is_dark_mode)
-        self.dark_mode_checkbox.stateChanged.connect(self.toggle_dark_mode)
-        settings_layout.addWidget(self.dark_mode_checkbox)
+        theme_group.setLayout(theme_l)
+        layout.addWidget(theme_group)
 
-        settings_group.setLayout(settings_layout)
-        layout.addWidget(settings_group)
+        # About
+        about_group = QGroupBox("درباره برنامه")
+        about_l = QVBoxLayout()
+        about_text = QLabel(
+            f"<b>{APP_NAME}</b><br>"
+            f"نسخه: <b>{__version__}</b><br><br>"
+            "ویرایشگر ساده تصویر و ویدیو با رابط دو زبانه.<br>"
+            "توسعه‌دهنده اصلی: Keyvan Alavi<br><br>"
+            "<i>در ارتقای این نسخه جدید از Grok (نسخه رایگان) نیز استفاده شده است.</i>"
+        )
+        about_text.setWordWrap(True)
+        about_text.setTextFormat(Qt.TextFormat.RichText)
+        about_l.addWidget(about_text)
+
+        btn_clear_cache = QPushButton("پاک کردن کش")
+        btn_clear_cache.setToolTip("فایل‌های موقت را حذف می‌کند")
+        btn_clear_cache.clicked.connect(self.clear_cache)
+        about_l.addWidget(btn_clear_cache)
+
+        about_group.setLayout(about_l)
+        layout.addWidget(about_group)
+
         layout.addStretch()
 
-        self.settings_tab.setLayout(layout)
-
-    def toggle_dark_mode(self, state):
-        self.is_dark_mode = bool(state)
-        if self.is_dark_mode:
-            self.theme = "Dark"
-            self.theme_combo.setCurrentText("Dark")
-        else:
-            self.theme = "Default"
-            self.theme_combo.setCurrentText("Default")
+    # ------------------------------------------------------------------
+    # Settings handlers
+    # ------------------------------------------------------------------
+    def _on_theme_changed(self, name):
+        self.theme = name
         self.save_settings()
 
-    def change_theme(self, theme):
-        self.theme = theme
-        if theme == "Dark":
-            self.is_dark_mode = True
-            self.dark_mode_checkbox.setChecked(True)
-        else:
-            self.is_dark_mode = False
-            self.dark_mode_checkbox.setChecked(False)
+    def _on_font_changed(self, value):
+        self.font_size = value
         self.save_settings()
 
-    def change_font_size(self, size):
-        self.font_size = size
-        self.save_settings()
+    def clear_cache(self):
+        try:
+            if CACHE_DIR.exists():
+                for f in CACHE_DIR.iterdir():
+                    if f.is_file():
+                        f.unlink()
+            self.statusBar().showMessage("کش پاک شد", 3000)
+            QMessageBox.information(self, "موفق", "فایل‌های موقت حذف شدند.")
+        except Exception as e:
+            QMessageBox.warning(self, "خطا", f"خطا در پاک‌سازی: {e}")
 
-    def select_image(self):
-        path, _ = QFileDialog.getOpenFileName(self, "انتخاب تصویر", "", "Image files (*.png *.jpg *.bmp)")
-        if path:
-            self.current_image_path = path
-            try:
-                self.original_image = Image.open(path)
-                self.current_image = self.original_image.copy()
-                self.display_image(self.image_preview_label, path)
-                self.edited_image_preview_label.setPixmap(QPixmap())
-                self.history.clear()
-            except Exception as ex:
-                QMessageBox.warning(self, "خطا", f"خطا در بارگذاری تصویر: {ex}")
-
-    def apply_filter(self, filter_code):
-        if not self.current_image:
-            QMessageBox.warning(self, "خطا", "ابتدا یک تصویر انتخاب کنید.")
+    # ------------------------------------------------------------------
+    # Image handling
+    # ------------------------------------------------------------------
+    def open_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "انتخاب تصویر",
+            "", "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff);;All Files (*)"
+        )
+        if not path:
             return
         try:
-            self.history.append(self.current_image.copy())
-            image = self.current_image.copy()
+            img = Image.open(path).convert("RGB")
+            self.original_image = img.copy()
+            self.current_image = img.copy()
+            self.current_image_path = path
+            self.history = [img.copy()]
+            self.history_index = 0
+            self._reset_sliders()
+            self.display_current_image()
+            self.btn_save_image.setEnabled(True)
+            self._update_undo_redo_buttons()
+            self.statusBar().showMessage(f"تصویر بارگذاری شد: {Path(path).name}", 4000)
+        except Exception as e:
+            QMessageBox.warning(self, "خطا", f"نتوانست تصویر را باز کند:\n{e}")
 
-            if filter_code == 'BLUR':
-                filtered = image.filter(ImageFilter.BLUR)
-            elif filter_code == 'CONTOUR':
-                filtered = image.filter(ImageFilter.CONTOUR)
-            elif filter_code == 'DETAIL':
-                filtered = image.filter(ImageFilter.DETAIL)
-            elif filter_code == 'EMBOSS':
-                filtered = image.filter(ImageFilter.EMBOSS)
-            elif filter_code == 'SHARPEN':
-                filtered = image.filter(ImageFilter.SHARPEN)
-            elif filter_code == 'RESIZE_S':
-                filtered = image.resize((image.width // 2, image.height // 2))
-            elif filter_code == 'RESIZE_L':
-                filtered = image.resize((image.width * 2, image.height * 2))
-            elif filter_code == 'ROTATE_N':
-                filtered = image.rotate(90, expand=True)
-            elif filter_code == 'ROTATE_S':
-                filtered = image.rotate(180, expand=True)
-            elif filter_code == 'ROTATE_D':
-                filtered = image.rotate(270, expand=True)
-            elif filter_code == 'BRIGHTNESS_H':
-                enhancer = ImageEnhance.Brightness(image)
-                filtered = enhancer.enhance(1.5)
-            elif filter_code == 'BRIGHTNESS_L':
-                enhancer = ImageEnhance.Brightness(image)
-                filtered = enhancer.enhance(0.5)
-            elif filter_code == 'CONTRAST_H':
-                enhancer = ImageEnhance.Contrast(image)
-                filtered = enhancer.enhance(1.7)
-            elif filter_code == 'CONTRAST_L':
-                enhancer = ImageEnhance.Contrast(image)
-                filtered = enhancer.enhance(0.4)
-            elif filter_code == 'ENHANCE_QUALITY_H':
-                enhancer = ImageEnhance.Sharpness(image)
-                filtered = enhancer.enhance(2.8)
-            elif filter_code == 'ENHANCE_QUALITY_M':
-                enhancer = ImageEnhance.Sharpness(image)
-                filtered = enhancer.enhance(1.8)
-            elif filter_code == 'GRAYSCALE':
-                filtered = image.convert('L')
-            elif filter_code == 'COLOR_ADJUST_H':
-                enhancer = ImageEnhance.Color(image)
-                filtered = enhancer.enhance(2)
-            elif filter_code == 'COLOR_ADJUST_L':
-                enhancer = ImageEnhance.Color(image)
-                filtered = enhancer.enhance(0.4)
-            elif filter_code == 'SEPIA':
-                sepia_image = image.convert("RGB")
-                width, height = sepia_image.size
-                pixels = sepia_image.load()
-                for py in range(height):
-                    for px in range(width):
-                        r, g, b = sepia_image.getpixel((px, py))
-                        tr = int(0.393 * r + 0.769 * g + 0.189 * b)
-                        tg = int(0.349 * r + 0.686 * g + 0.168 * b)
-                        tb = int(0.272 * r + 0.534 * g + 0.131 * b)
-                        pixels[px, py] = (min(tr, 255), min(tg, 255), min(tb, 255))
-                filtered = sepia_image
-            elif filter_code == 'NEGATIVE':
-                filtered = ImageOps.invert(image.convert("RGB"))
-            elif filter_code == 'VINTAGE':
-                vintage_image = image.convert("RGB")
-                enhancer = ImageEnhance.Color(vintage_image)
-                filtered = enhancer.enhance(0.2)
+    def display_current_image(self):
+        if self.current_image is None:
+            return
+        # Save temp for QPixmap
+        tmp = CACHE_DIR / f"preview_{time.time_ns()}.png"
+        try:
+            self.current_image.save(tmp, "PNG")
+            pix = QPixmap(str(tmp))
+            if not pix.isNull():
+                scaled = pix.scaled(
+                    self.image_preview_label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.image_preview_label.setPixmap(scaled)
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-            self.current_image = filtered
-            edited_path = os.path.join(CACHE_DIR, f"edited_{time.time()}.png")
-            filtered.save(edited_path)
-            self.display_image(self.edited_image_preview_label, edited_path)
-        except Exception as ex:
-            QMessageBox.warning(self, "خطا", f"خطا در اعمال فیلتر: {ex}")
-
-    def undo_filter(self):
-        if self.history:
-            self.current_image = self.history.pop()
-            undone_path = os.path.join(CACHE_DIR, f"undone_{time.time()}.png")
-            self.current_image.save(undone_path)
-            self.display_image(self.edited_image_preview_label, undone_path)
+    def _push_history(self, img):
+        # Truncate forward history
+        self.history = self.history[: self.history_index + 1]
+        self.history.append(img.copy())
+        if len(self.history) > self.max_history:
+            self.history.pop(0)
         else:
-            QMessageBox.warning(self, "خطا", "هیچ تغییری برای برگرداندن وجود ندارد.")
+            self.history_index += 1
+        self._update_undo_redo_buttons()
 
-    def reset_filters(self):
-        if self.original_image:
-            self.current_image = self.original_image.copy()
-            self.history.clear()
-            self.display_image(self.image_preview_label, self.current_image_path)
-            self.edited_image_preview_label.setPixmap(QPixmap())
-        else:
-            QMessageBox.warning(self, "خطا", "هیچ تصویری انتخاب نشده است.")
+    def _update_undo_redo_buttons(self):
+        self.btn_undo.setEnabled(self.history_index > 0)
+        self.btn_redo.setEnabled(self.history_index < len(self.history) - 1)
+        has_img = self.current_image is not None
+        self.btn_reset.setEnabled(has_img)
+        self.btn_save_image.setEnabled(has_img)
 
-    def select_video(self):
-        path, _ = QFileDialog.getOpenFileName(self, "انتخاب ویدیو", "", "Video files (*.mp4 *.avi *.mov)")
+    def undo(self):
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.current_image = self.history[self.history_index].copy()
+            self._reset_sliders()
+            self.display_current_image()
+            self._update_undo_redo_buttons()
+            self.statusBar().showMessage("Undo", 1500)
+
+    def redo(self):
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.current_image = self.history[self.history_index].copy()
+            self._reset_sliders()
+            self.display_current_image()
+            self._update_undo_redo_buttons()
+            self.statusBar().showMessage("Redo", 1500)
+
+    def reset_image(self):
+        if self.original_image is None:
+            return
+        self.current_image = self.original_image.copy()
+        self.history = [self.original_image.copy()]
+        self.history_index = 0
+        self._reset_sliders()
+        self.display_current_image()
+        self._update_undo_redo_buttons()
+        self.statusBar().showMessage("به حالت اصلی بازگشت", 2500)
+
+    def _reset_sliders(self):
+        self.brightness_slider.blockSignals(True)
+        self.contrast_slider.blockSignals(True)
+        self.brightness_slider.setValue(0)
+        self.contrast_slider.setValue(0)
+        self.brightness_value.setText("0")
+        self.contrast_value.setText("0")
+        self.brightness_slider.blockSignals(False)
+        self.contrast_slider.blockSignals(False)
+
+    def _on_live_adjust(self):
+        if self.current_image is None or self.history_index < 0:
+            return
+        # Work from the last committed history state
+        base = self.history[self.history_index].copy()
+        b_val = self.brightness_slider.value()
+        c_val = self.contrast_slider.value()
+        self.brightness_value.setText(str(b_val))
+        self.contrast_value.setText(str(c_val))
+
+        img = base
+        if b_val != 0:
+            enhancer = ImageEnhance.Brightness(img)
+            # map -100..100 → 0.0 .. 2.0
+            factor = 1.0 + (b_val / 100.0)
+            img = enhancer.enhance(factor)
+        if c_val != 0:
+            enhancer = ImageEnhance.Contrast(img)
+            factor = 1.0 + (c_val / 100.0)
+            img = enhancer.enhance(factor)
+        self.current_image = img
+        self.display_current_image()
+
+    def apply_live_adjustments(self):
+        if self.current_image is None:
+            return
+        if self.brightness_slider.value() == 0 and self.contrast_slider.value() == 0:
+            return
+        self._push_history(self.current_image)
+        self._reset_sliders()
+        self.statusBar().showMessage("تنظیمات زنده اعمال شد", 2500)
+
+    def apply_filter(self, code):
+        if self.current_image is None:
+            QMessageBox.warning(self, "توجه", "ابتدا یک تصویر باز کنید.")
+            return
+        try:
+            img = self.current_image.copy()
+            if code == "BLUR":
+                img = img.filter(ImageFilter.BLUR)
+            elif code == "CONTOUR":
+                img = img.filter(ImageFilter.CONTOUR)
+            elif code == "DETAIL":
+                img = img.filter(ImageFilter.DETAIL)
+            elif code == "EMBOSS":
+                img = img.filter(ImageFilter.EMBOSS)
+            elif code == "SHARPEN":
+                img = img.filter(ImageFilter.SHARPEN)
+            elif code == "GRAYSCALE":
+                img = ImageOps.grayscale(img).convert("RGB")
+            elif code == "SEPIA":
+                img = self._sepia(img)
+            elif code == "NEGATIVE":
+                img = ImageOps.invert(img)
+            elif code == "VINTAGE":
+                img = self._vintage(img)
+            elif code == "ENHANCE_QUALITY_H":
+                img = ImageEnhance.Sharpness(img).enhance(2.0)
+                img = ImageEnhance.Contrast(img).enhance(1.3)
+            elif code == "ENHANCE_QUALITY_M":
+                img = ImageEnhance.Sharpness(img).enhance(1.4)
+                img = ImageEnhance.Contrast(img).enhance(1.15)
+            elif code == "COLOR_ADJUST_H":
+                img = ImageEnhance.Color(img).enhance(1.5)
+            elif code == "COLOR_ADJUST_L":
+                img = ImageEnhance.Color(img).enhance(0.7)
+            elif code == "ROTATE_N":
+                img = img.rotate(-90, expand=True)
+            elif code == "ROTATE_S":
+                img = img.rotate(180, expand=True)
+            elif code == "ROTATE_D":
+                img = img.rotate(90, expand=True)
+            elif code == "RESIZE_S":
+                w, h = img.size
+                img = img.resize((max(1, w // 2), max(1, h // 2)), Image.Resampling.LANCZOS)
+            elif code == "RESIZE_L":
+                w, h = img.size
+                img = img.resize((w * 2, h * 2), Image.Resampling.LANCZOS)
+
+            self.current_image = img
+            self._push_history(img)
+            self._reset_sliders()
+            self.display_current_image()
+            self.statusBar().showMessage(f"فیلتر {code} اعمال شد", 2000)
+        except Exception as e:
+            QMessageBox.warning(self, "خطا", f"خطا در اعمال فیلتر:\n{e}")
+
+    def _sepia(self, img):
+        img = img.convert("RGB")
+        pixels = img.load()
+        for y in range(img.height):
+            for x in range(img.width):
+                r, g, b = pixels[x, y]
+                tr = int(0.393 * r + 0.769 * g + 0.189 * b)
+                tg = int(0.349 * r + 0.686 * g + 0.168 * b)
+                tb = int(0.272 * r + 0.534 * g + 0.131 * b)
+                pixels[x, y] = (min(tr, 255), min(tg, 255), min(tb, 255))
+        return img
+
+    def _vintage(self, img):
+        img = ImageEnhance.Color(img).enhance(0.6)
+        img = ImageEnhance.Contrast(img).enhance(1.2)
+        img = ImageOps.autocontrast(img)
+        return img
+
+    def save_image(self):
+        if self.current_image is None:
+            return
+        default_name = "edited.png"
+        if self.current_image_path:
+            p = Path(self.current_image_path)
+            default_name = f"{p.stem}_edited{p.suffix}"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "ذخیره تصویر",
+            default_name,
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;WebP (*.webp);;All Files (*)"
+        )
         if path:
-            self.current_video_path = path
-            self.video_status_label.setText(f"ویدیو انتخاب شده: {os.path.basename(path)}")
             try:
-                video = VideoFileClip(path)
-                self.video_duration = video.duration
-                thumbnail_path = os.path.join(CACHE_DIR, f"thumb_{time.time()}.png")
-                video.save_frame(thumbnail_path, t=1.0)
-                video.close()
-                self.display_image(self.video_preview_label, thumbnail_path, video=True)
-            except Exception as ex:
-                self.video_preview_label.setText(f"خطا در پیش‌نمایش ویدیو: {ex}")
+                self.current_image.save(path)
+                self.statusBar().showMessage(f"ذخیره شد: {path}", 4000)
+                QMessageBox.information(self, "موفق", f"تصویر در مسیر زیر ذخیره شد:\n{path}")
+            except Exception as e:
+                QMessageBox.warning(self, "خطا", f"خطا در ذخیره:\n{e}")
+
+    # ------------------------------------------------------------------
+    # Video handling
+    # ------------------------------------------------------------------
+    def open_video(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "انتخاب ویدیو",
+            "", "Videos (*.mp4 *.mkv *.avi *.mov *.webm);;All Files (*)"
+        )
+        if not path:
+            return
+        try:
+            clip = VideoFileClip(path)
+            self.video_duration = clip.duration
+            self.current_video_path = path
+
+            # Thumbnail
+            thumb = CACHE_DIR / f"vid_thumb_{time.time_ns()}.png"
+            clip.save_frame(str(thumb), t=min(1.0, self.video_duration / 2))
+            clip.close()
+
+            self.display_image(self.video_preview_label, str(thumb), video=True)
+            mins, secs = divmod(int(self.video_duration), 60)
+            hours, mins = divmod(mins, 60)
+            self.video_info_label.setText(
+                f"فایل: {Path(path).name}\n"
+                f"مدت: {hours:02d}:{mins:02d}:{secs:02d}\n"
+                f"مسیر: {path}"
+            )
+            self.trim_end_input.setText(f"{hours:02d}:{mins:02d}:{secs:02d}")
+            self.statusBar().showMessage(f"ویدیو بارگذاری شد • {self.video_duration:.1f} ثانیه", 4000)
+        except Exception as e:
+            QMessageBox.warning(self, "خطا", f"نتوانست ویدیو را باز کند:\n{e}")
 
     def start_trim_video(self):
         if not self.current_video_path:
             QMessageBox.warning(self, "خطا", "ابتدا یک ویدیو انتخاب کنید.")
             return
+        if not FFMPEG_PATH:
+            QMessageBox.warning(self, "خطا", "FFmpeg پیدا نشد. لطفاً آن را نصب کنید.")
+            return
 
-        start_time = self.trim_start_input.text()
-        end_time = self.trim_end_input.text()
-        start_secs = self.parse_time_to_secs(start_time)
-        end_secs = self.parse_time_to_secs(end_time)
+        start_secs = self.parse_time_to_secs(self.trim_start_input.text())
+        end_secs = self.parse_time_to_secs(self.trim_end_input.text())
 
         if start_secs is None or end_secs is None:
             QMessageBox.warning(self, "خطا", "فرمت زمان نامعتبر است. از HH:MM:SS استفاده کنید.")
@@ -739,85 +1051,133 @@ class MediaEditor(QMainWindow):
         if start_secs >= end_secs:
             QMessageBox.warning(self, "خطا", "زمان شروع باید کمتر از پایان باشد.")
             return
-        if start_secs < 0 or end_secs > self.video_duration:
+        if start_secs < 0 or end_secs > self.video_duration + 0.5:
             QMessageBox.warning(self, "خطا", "زمان‌ها خارج از محدوده ویدیو هستند.")
             return
 
-        output_path = os.path.join(CACHE_DIR, f"trimmed_{time.time()}.mp4")
-
+        output_path = str(CACHE_DIR / f"trimmed_{time.time_ns()}.mp4")
         self.video_progress.setVisible(True)
         self.video_progress.setValue(0)
+        self.statusBar().showMessage("در حال برش ویدیو...")
+
         self.thread = ProgressThread('trim', self.current_video_path, start_secs, end_secs, output_path)
         self.thread.progress_signal.connect(self.video_progress.setValue)
         self.thread.finished_signal.connect(self.finish_trim_video)
+        self.thread.error_signal.connect(lambda msg: QMessageBox.warning(self, "خطای FFmpeg", msg))
         self.thread.start()
 
     def finish_trim_video(self, output_path):
         self.video_progress.setVisible(False)
-        if output_path and os.path.exists(output_path):
-            thumbnail_path = os.path.join(CACHE_DIR, f"trim_thumb_{time.time()}.png")
+        if output_path and Path(output_path).exists():
             try:
-                temp_video = VideoFileClip(output_path)
-                temp_video.save_frame(thumbnail_path, t=1.0)
-                temp_video.close()
-                self.display_image(self.video_preview_label, thumbnail_path, video=True)
-            except Exception as ex:
-                QMessageBox.warning(self, "خطا", f"خطا در ایجاد پیش‌نمایش: {ex}")
-                return
+                thumb = CACHE_DIR / f"trim_thumb_{time.time_ns()}.png"
+                temp = VideoFileClip(output_path)
+                temp.save_frame(str(thumb), t=min(1.0, temp.duration / 2))
+                temp.close()
+                self.display_image(self.video_preview_label, str(thumb), video=True)
+            except Exception:
+                pass
 
-            save_path, _ = QFileDialog.getSaveFileName(self, "ذخیره ویدیو برش‌خورده", os.path.splitext(os.path.basename(self.current_video_path))[0] + "_trimmed.mp4", "MP4 files (*.mp4)")
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "ذخیره ویدیو برش‌خورده",
+                Path(self.current_video_path).stem + "_trimmed.mp4",
+                "MP4 (*.mp4)"
+            )
             if save_path:
                 try:
                     shutil.move(output_path, save_path)
-                    QMessageBox.information(self, "موفق", f"ویدیو در {save_path} ذخیره شد.")
-                except Exception as ex:
-                    QMessageBox.warning(self, "خطا", f"خطا در ذخیره فایل: {ex}")
+                    self.statusBar().showMessage(f"ویدیو ذخیره شد: {save_path}", 5000)
+                    QMessageBox.information(self, "موفق", f"ویدیو ذخیره شد:\n{save_path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "خطا", f"خطا در ذخیره: {e}")
+            else:
+                Path(output_path).unlink(missing_ok=True)
         else:
-            QMessageBox.warning(self, "خطا", "برش ویدیو ناموفق بود. لطفاً فرمت ویدیو یا مسیر را بررسی کنید.")
+            QMessageBox.warning(self, "خطا", "برش ویدیو ناموفق بود.")
 
     def start_convert_to_mp3(self):
         if not self.current_video_path:
             QMessageBox.warning(self, "خطا", "ابتدا یک ویدیو انتخاب کنید.")
             return
+        if not FFMPEG_PATH:
+            QMessageBox.warning(self, "خطا", "FFmpeg پیدا نشد.")
+            return
 
-        output_path = os.path.join(CACHE_DIR, f"converted_{time.time()}.mp3")
-
+        output_path = str(CACHE_DIR / f"converted_{time.time_ns()}.mp3")
         self.video_progress.setVisible(True)
         self.video_progress.setValue(0)
+        self.statusBar().showMessage("در حال استخراج صدا...")
+
         self.thread = ProgressThread('mp3', self.current_video_path, output_path)
         self.thread.progress_signal.connect(self.video_progress.setValue)
         self.thread.finished_signal.connect(self.finish_convert_to_mp3)
+        self.thread.error_signal.connect(lambda msg: QMessageBox.warning(self, "خطای FFmpeg", msg))
         self.thread.start()
 
     def finish_convert_to_mp3(self, output_path):
         self.video_progress.setVisible(False)
-        if output_path and os.path.exists(output_path):
-            save_path, _ = QFileDialog.getSaveFileName(self, "ذخیره فایل MP3", os.path.splitext(os.path.basename(self.current_video_path))[0] + ".mp3", "MP3 files (*.mp3)")
+        if output_path and Path(output_path).exists():
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "ذخیره فایل MP3",
+                Path(self.current_video_path).stem + ".mp3",
+                "MP3 (*.mp3)"
+            )
             if save_path:
                 try:
                     shutil.move(output_path, save_path)
-                    QMessageBox.information(self, "موفق", f"فایل MP3 در {save_path} ذخیره شد.")
-                except Exception as ex:
-                    QMessageBox.warning(self, "خطا", f"خطا در ذخیره فایل: {ex}")
+                    self.statusBar().showMessage(f"MP3 ذخیره شد: {save_path}", 5000)
+                    QMessageBox.information(self, "موفق", f"فایل MP3 ذخیره شد:\n{save_path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "خطا", f"خطا در ذخیره: {e}")
+            else:
+                Path(output_path).unlink(missing_ok=True)
         else:
-            QMessageBox.warning(self, "خطا", "تبدیل به MP3 ناموفق بود. لطفاً فرمت ویدیو یا مسیر را بررسی کنید.")
+            QMessageBox.warning(self, "خطا", "تبدیل به MP3 ناموفق بود.")
 
     def parse_time_to_secs(self, time_str):
         try:
-            h, m, s = map(int, time_str.strip().split(':'))
-            return h * 3600 + m * 60 + s
-        except:
+            parts = time_str.strip().split(':')
+            if len(parts) == 3:
+                h, m, s = map(int, parts)
+                return h * 3600 + m * 60 + s
+            elif len(parts) == 2:
+                m, s = map(int, parts)
+                return m * 60 + s
+            return None
+        except Exception:
             return None
 
     def display_image(self, label, path, video=False):
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
+        pix = QPixmap(path)
+        if pix.isNull():
             label.setText("خطا در بارگذاری تصویر")
         else:
-            label.setPixmap(pixmap.scaled(400, 300, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            label.setPixmap(
+                pix.scaled(400, 300, Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+            )
 
+    def closeEvent(self, event):
+        # Clean cache on exit (optional – keep recent for now)
+        try:
+            for f in CACHE_DIR.glob("preview_*"):
+                f.unlink(missing_ok=True)
+            for f in CACHE_DIR.glob("vid_thumb_*"):
+                f.unlink(missing_ok=True)
+            for f in CACHE_DIR.glob("trim_thumb_*"):
+                f.unlink(missing_ok=True)
+        except Exception:
+            pass
+        event.accept()
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName(ORG_NAME)
+
     window = MediaEditor()
     window.show()
     sys.exit(app.exec())
